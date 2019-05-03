@@ -30,6 +30,8 @@ config.add_argument('--n_s', default=1.0, type=float)
 config.add_argument('--k_pivot', default=0.05, type=float)
 config.add_argument('--P_k_max_1/Mpc', default=100, type=float)
 config.add_argument('--A_s', default=2.15e-9, type=float)
+config.add_argument('--k_min_tau0', default=4.0, type=float)
+config.add_argument('--k_per_decade_for_pk', default=400, type=int)
 
 classconfig = vars(config.parse_args())
 
@@ -51,7 +53,7 @@ def primordial_potential_powerspectrum():
 
     k = numpy.logspace(-6, 4, 10000) #laying out the k-space samples
     scale_invariant_powerpsectrum = classconfig['A_s'] * (k/classconfig['k_pivot'])**(classconfig['n_s']-1.0)
-    interpolator = interp1d(k, (2*numpy.pi**2/k**3) * scale_invariant_powerpsectrum)
+    interpolator = interp1d(k, (2*numpy.pi**2/k**3) * scale_invariant_powerpsectrum, fill_value='extrapolate')
 
     return interpolator
 
@@ -72,7 +74,7 @@ def transfer_primordial_potential_to_cdm(field='d_cdm', redshift=options.redshif
     """
 
     Tk = cosmo.get_transfer(z=redshift)
-    Tk = interp1d(Tk['k (h/Mpc)']*cosmo.h(), Tk[field])
+    Tk = interp1d(Tk['k (h/Mpc)']*cosmo.h(), Tk[field], fill_value='extrapolate')
     return Tk
 
 
@@ -124,14 +126,9 @@ def matter_perturbation(phik, kmodulus, redshift=options.redshift):
     """
 
     Tk = transfer_primordial_potential_to_cdm(redshift=redshift) 
-    
-    #skip first element since |k| = 0 for that 
-    for i in range(kmodulus.shape[0]):
-        for j in range(kmodulus.shape[1]):
-            for k in range(kmodulus.shape[2]):
-                if i==0 and j==0 and k==0: continue
-                phik[i,j,k] *= Tk(kmodulus[i,j,k])
-
+    Tk = Tk(kmodulus) 
+    phik[i,j,k] *= Tk(kmodulus[i,j,k])
+    phik[0,0,0] = 0 #skip first element since |k| = 0 for that 
     return phik
 
 
@@ -183,48 +180,34 @@ def deltak(boxsize=options.boxsize, gridspacing=options.gridspacing, redshift=op
     #Interpolator object 
     primordial_power = primordial_potential_powerspectrum()
     T = transfer_primordial_potential_to_cdm(redshift=redshift) 
-    T0 = transfer_primordial_potential_to_cdm(redshift=0)
+    T0 = transfer_primordial_potential_to_cdm(redshift=2)
     
+ 
+    #simulating phik's  
+    powerspectrum = primordial_power(kmodulus)
+    sdev = numpy.sqrt(powerspectrum*volume/2.0)
+    real = numpy.random.normal(loc=0, scale=sdev, size=sdev.shape)
+    imag = numpy.random.normal(loc=0, scale=sdev, size=sdev.shape)
+    phik = (real + 1j*imag)
+   
+    #N-GenIC type cleaning
+    phik[0,0,0] = 0
+    phik[midpoint,:,:] = phik[:,midpoint,:] = phik[:,:,midpoint] = 0
+    #phik[0,midpoint:,0] = 0
+    #phik[midpoint:,:,0] = 0
 
-    for i in range(kmodulus.shape[0]):
-        for j in range(kmodulus.shape[1]):
-            for k in range(kmodulus.shape[2]):
-                
-                if i == midpoint or j == midpoint or k == midpoint:
-                    continue
-                
-                if i == 0 and j == 0 and k == 0:
-                    continue
 
-                if k == 0:
-                    if i == 0:
-                        if j > midpoint:
-                            continue
-                    else:
-                        if i > midpoint:
-                            continue
-                #simulating phik's  
-                powerspectrum = primordial_power(kmodulus[i,j,k])
-                sdev = numpy.sqrt(powerspectrum*volume/2.0)
-                real = numpy.random.normal(loc=0, scale=sdev)
-                imag = numpy.random.normal(loc=0, scale=sdev)
-                phik[i,j,k] = (real + 1j*imag)
-    
+
     #Adding non-gaussianity
     if fnl != 0:
         phi = numpy.fft.irfftn(phik)
         phi = phi + fnl*(phi**2 - numpy.mean(phi**2))
         phik = numpy.fft.rfftn(phi)
+   
+    T = T(kmodulus); T0=T0(kmodulus)
+    delta = phik*T; delta0 = phik*T0
     
-
-    for i in range(kmodulus.shape[0]):
-        for j in range(kmodulus.shape[1]):
-            for k in range(kmodulus.shape[2]):
-                if i==0 and j==0 and k==0: continue
-                delta[i,j,k] = phik[i,j,k]*T(kmodulus[i,j,k])
-                delta0[i,j,k] = phik[i,j,k]*T0(kmodulus[i,j,k])
-
-    
+    delta[0,0,0] = 0; delta0[0,0,0] = 0;
     delta = hermitianize(delta)
     delta0 = hermitianize(delta0)
     numpy.save(options.final_filename, delta0)
