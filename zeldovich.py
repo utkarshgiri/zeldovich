@@ -17,7 +17,7 @@ config.add('--logfile', help='log file name')
 config.add('--ics_filename', type=str)
 config.add('--zeldoics_filename', type=str)
 config.add('--final_filename', type=str)
-
+config.add('--final_condition_redshift', default=2, type=float)
 options = config.parse_args()
 
 config = configargparse.ArgParser(default_config_files=['./class.ini'])
@@ -183,7 +183,7 @@ def deltak(boxsize=options.boxsize, gridspacing=options.gridspacing, redshift=op
     #Interpolator object 
     primordial_power = primordial_potential_powerspectrum()
     T = transfer_primordial_potential_to_cdm(redshift=redshift) 
-    T0 = transfer_primordial_potential_to_cdm(redshift=0)
+    T0 = transfer_primordial_potential_to_cdm(redshift=options.final_condition_redshift)
     
 
     for i in range(kmodulus.shape[0]):
@@ -210,11 +210,13 @@ def deltak(boxsize=options.boxsize, gridspacing=options.gridspacing, redshift=op
                 imag = numpy.random.normal(loc=0, scale=sdev)
                 phik[i,j,k] = (real + 1j*imag)
     
+    phik = hermitianize(phik)
     #Adding non-gaussianity
     if fnl != 0:
         phi = numpy.fft.irfftn(phik)
         phi = phi + fnl*(phi**2 - numpy.mean(phi**2))
         phik = numpy.fft.rfftn(phi)
+        phik = hermitianize(phik)
     
 
     for i in range(kmodulus.shape[0]):
@@ -350,5 +352,5 @@ def hermitianize(x):
 
 if __name__ == "__main__":
     write_ics()
-    #matter_power(0, "pk")
+    matter_power(0, "pk")
 
