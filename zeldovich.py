@@ -1,4 +1,5 @@
-import glio
+import h5py
+import shutil
 import numpy
 import configargparse
 from classy import Class
@@ -322,14 +323,14 @@ def write_ics():
     A function that writes out 
     initial condition file
     """
-    s = glio.GadgetSnapshot(str(options.ics_filename))
-    s.load()
+    shutil.copy2(options.ics_filename, options.zeldoics_filename)
+    handle = h5py.File(options.zeldoics_filename, 'r+')
     position, velocity = positions(deltak())
     position = position.astype(numpy.float32)
     velocity = velocity.astype(numpy.float32)
-    s.pos[1][:] = position[:]
-    s.vel[1][:] = velocity[:]
-    s.save(str(options.zeldoics_filename))
+    handle['PartType1']['Coordinates'][:] = position[:]
+    handle['PartType1']['Velocities'][:] = velocity[:]
+    handle.close()
 
 
 def hermitianize(x):
