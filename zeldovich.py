@@ -1,4 +1,5 @@
-import glio
+import h5py
+import shutil
 import numpy
 import configargparse
 from classy import Class
@@ -17,7 +18,7 @@ config.add('--logfile', help='log file name')
 config.add('--ics_filename', type=str)
 config.add('--zeldoics_filename', type=str)
 config.add('--final_filename', type=str)
-
+config.add('--final_condition_redshift', default=2, type=float)
 options = config.parse_args()
 
 config = configargparse.ArgParser(default_config_files=['./class.ini'])
@@ -127,7 +128,7 @@ def matter_perturbation(phik, kmodulus, redshift=options.redshift):
 
     Tk = transfer_primordial_potential_to_cdm(redshift=redshift) 
     Tk = Tk(kmodulus) 
-    phik[i,j,k] *= Tk(kmodulus[i,j,k])
+    phik[i,j,k] *= Tk
     phik[0,0,0] = 0 #skip first element since |k| = 0 for that 
     return phik
 
@@ -192,20 +193,24 @@ def deltak(boxsize=options.boxsize, gridspacing=options.gridspacing, redshift=op
    
     #N-GenIC type cleaning
     phik[0,0,0] = 0
-    phik[midpoint,:,:] = phik[:,midpoint,:] = phik[:,:,midpoint] = 0
-    #phik[0,midpoint:,0] = 0
-    #phik[midpoint:,:,0] = 0
+    phik[midpoint,:,:] = 0
+    phik[:,midpoint,:] = 0
+    phik[:,:,midpoint] = 0
+    phik[0,midpoint:,0] = 0
+    phik[midpoint:,:,0] = 0
 
-
+    phik = hermitianize(phik)
 
     #Adding non-gaussianity
     if fnl != 0:
         phi = numpy.fft.irfftn(phik)
         phi = phi + fnl*(phi**2 - numpy.mean(phi**2))
         phik = numpy.fft.rfftn(phi)
+        phik = hermitianize(phik)
    
-    T = T(kmodulus); T0=T0(kmodulus)
-    delta = phik*T; delta0 = phik*T0
+    #T = T(kmodulus); T0=T0(kmodulus)
+    delta = phik*T(kmodulus)
+    delta0 = phik*T0(kmodulus)
     
     delta[0,0,0] = 0; delta0[0,0,0] = 0;
     delta = hermitianize(delta)
@@ -303,14 +308,15 @@ def write_ics():
     A function that writes out 
     initial condition file
     """
-    s = glio.GadgetSnapshot(str(options.ics_filename))
-    s.load()
+    shutil.copy2(options.ics_filename, options.zeldoics_filename)
+    print("File copied ...")
+    handle = h5py.File(options.zeldoics_filename, 'r+')
     position, velocity = positions(deltak())
     position = position.astype(numpy.float32)
     velocity = velocity.astype(numpy.float32)
-    s.pos[1][:] = position[:]
-    s.vel[1][:] = velocity[:]
-    s.save(str(options.zeldoics_filename))
+    handle['PartType1']['Coordinates'][:] = position[:]
+    handle['PartType1']['Velocities'][:] = velocity[:]
+    handle.close()
 
 
 def hermitianize(x):
