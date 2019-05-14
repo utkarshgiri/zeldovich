@@ -1,6 +1,6 @@
 import h5py
-import shutil
 import numpy
+import shutil
 import configargparse
 from classy import Class
 from scipy.interpolate import interp1d
