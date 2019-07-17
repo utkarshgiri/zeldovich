@@ -5,47 +5,6 @@ import configargparse
 from classy import Class
 from scipy.interpolate import interp1d
 
-numpy.random.seed(42)
-
-config = configargparse.ArgParser(default_config_files=['./config.ini'])
-
-config.add('--boxsize', type=int, required=True, help='boxsize')
-config.add('--redshift', type=float, required=True, help='redshift of calaculation')
-config.add('--gridspacing', type=float, required=True, help='gridspacing in box')
-config.add('--speed_of_light', type=float, default=3e5, help='gridspacing in box')
-config.add('--fnl', type=float, default=0.0, help="fnl parameter")
-config.add('--logfile', help='log file name')
-config.add('--ics_filename', type=str)
-config.add('--zeldoics_filename', type=str)
-config.add('--final_filename', type=str)
-config.add('--final_condition_redshift', default=2, type=float)
-options = config.parse_args()
-
-config = configargparse.ArgParser(default_config_files=['./class.ini'])
-config.add_argument('--h', default=0.7, type=float)
-config.add_argument('--z_pk', default=0.0, type=float)
-config.add_argument('--output', default='mPk mTk', type=str)
-config.add_argument('--omega_b', default=0.02, type=float)
-config.add_argument('--omega_cdm', default=0.128, type=float)
-config.add_argument('--n_s', default=1.0, type=float)
-config.add_argument('--k_pivot', default=0.05, type=float)
-config.add_argument('--P_k_max_1/Mpc', default=100, type=float)
-config.add_argument('--A_s', default=2.15e-9, type=float)
-config.add_argument('--k_min_tau0', default=4.0, type=float)
-config.add_argument('--k_per_decade_for_pk', default=400, type=int)
-
-classconfig = vars(config.parse_args())
-
-cosmo = Class()
-cosmo.set(classconfig)
-cosmo.compute()
-
-bg = cosmo.get_background()
-
-volume = options.boxsize**3
-gridsize = int(options.boxsize/options.gridspacing)
-midpoint = gridsize/2
-
 def primordial_potential_powerspectrum():
     """
     Returns an interpolator object which 
@@ -59,7 +18,7 @@ def primordial_potential_powerspectrum():
     return interpolator
 
 
-def transfer_primordial_potential_to_cdm(field='d_cdm', redshift=options.redshift):
+def transfer_primordial_potential_to_cdm(field='d_cdm', redshift=0):
     """
     A function which returns an interpolator for 
     transfer function.
@@ -73,13 +32,12 @@ def transfer_primordial_potential_to_cdm(field='d_cdm', redshift=options.redshif
         returns the corresponding transfer function
         interpolator for the given field.
     """
-
     Tk = cosmo.get_transfer(z=redshift)
     Tk = interp1d(Tk['k (h/Mpc)']*cosmo.h(), Tk[field], fill_value='extrapolate')
     return Tk
 
 
-def matter_power(redshift=options.redshift, filename=None):
+def matter_power(redshift=0, filename=None):
     """
     Function which returns mattter powerspectrum using
     primordial powerspectrum interpolator and transfer
@@ -109,7 +67,7 @@ def matter_power(redshift=options.redshift, filename=None):
     return power
 
 
-def matter_perturbation(phik, kmodulus, redshift=options.redshift):
+def matter_perturbation(phik, kmodulus, redshift=0):
     """
     A function that applies CDM transfer function to 
     primordial potential modes generated on a grid
@@ -133,7 +91,7 @@ def matter_perturbation(phik, kmodulus, redshift=options.redshift):
     return phik
 
 
-def class_powerspectrum(redshift = options.redshift):
+def class_powerspectrum(redshift=0):
     """
     A helper function that returns the class powerspectrum
     at a given redshift 
@@ -152,7 +110,7 @@ def class_powerspectrum(redshift = options.redshift):
     return numpy.column_stack([kvalues, class_powerspectrum])
 
 
-def deltak(boxsize=options.boxsize, gridspacing=options.gridspacing, redshift=options.redshift, fnl=options.fnl):
+def deltak(boxsize, gridspacing=1.0, redshift=0, fnl=0):
     """
     A function which samples phik modes on a 3D k-space grid
     to be used fro creating initial condition for N-body
@@ -169,6 +127,9 @@ def deltak(boxsize=options.boxsize, gridspacing=options.gridspacing, redshift=op
         The fourier space field phik
 
     """
+    volume = boxsize**3
+    gridsize = int(options.boxsize/options.gridspacing)
+    midpoint = gridsize/2
     #Setting up the k-space grid
     kspace = 2 * numpy.pi * numpy.fft.fftfreq(n=gridsize, d=gridspacing)
     kx, ky, kz = numpy.meshgrid(kspace, kspace, kspace)
@@ -181,7 +142,7 @@ def deltak(boxsize=options.boxsize, gridspacing=options.gridspacing, redshift=op
     #Interpolator object 
     primordial_power = primordial_potential_powerspectrum()
     T = transfer_primordial_potential_to_cdm(redshift=redshift) 
-    T0 = transfer_primordial_potential_to_cdm(redshift=2)
+    T0 = transfer_primordial_potential_to_cdm(redshift=0)
     
  
     #simulating phik's  
@@ -202,9 +163,9 @@ def deltak(boxsize=options.boxsize, gridspacing=options.gridspacing, redshift=op
     phik = hermitianize(phik)
 
     #Adding non-gaussianity
-    if fnl != 0:
+    if fnl >= 0 or fnl < 0:
         phi = numpy.fft.irfftn(phik)
-        phi = phi + fnl*(phi**2 - numpy.mean(phi**2))
+        phi = phi + fnl*(phi**2 - numpy.mean(phi*phi.conjugate()))
         phik = numpy.fft.rfftn(phi)
         phik = hermitianize(phik)
    
@@ -215,12 +176,12 @@ def deltak(boxsize=options.boxsize, gridspacing=options.gridspacing, redshift=op
     delta[0,0,0] = 0; delta0[0,0,0] = 0;
     delta = hermitianize(delta)
     delta0 = hermitianize(delta0)
-    numpy.save(options.final_filename, delta0)
-    
+    #numpy.save(options.final_filename, delta0)
+    numpy.save(options.final_filename + 'vk', 1j*kz[:,:,:(midpoint+1)]*delta0/(kmodulus**2))
     return delta
 
 
-def displacement(deltak, boxsize=options.boxsize, gridspacing=options.gridspacing, redshift=options.redshift, fnl=0):
+def displacement(deltak, boxsize, displacement_filename, gridspacing=1.0, redshift=0.0, fnl=0):
     """
     Function to compute the displacement field from potential field
     Args:
@@ -232,6 +193,8 @@ def displacement(deltak, boxsize=options.boxsize, gridspacing=options.gridspacin
         displacement field vector for x, y and z
     """
 
+    gridsize = int(boxsize/gridspacing)
+    midpoint = gridsize/2
     kspace = 2 * numpy.pi * numpy.fft.fftfreq(n=gridsize, d=gridspacing)
     kx, ky, kz = numpy.meshgrid(kspace, kspace, kspace[:midpoint+1])
     kmodulus = numpy.sqrt(kx**2 + ky**2 + kz**2)
@@ -251,6 +214,8 @@ def displacement(deltak, boxsize=options.boxsize, gridspacing=options.gridspacin
     phiky = hermitianize(phiky)
     phikz = hermitianize(phikz)
 
+    numpy.save(displacement_filename, phikz)
+    
     psix = numpy.fft.irfftn(phikx)
     psiy = numpy.fft.irfftn(phiky)
     psiz = numpy.fft.irfftn(phikz)
@@ -276,7 +241,7 @@ def velocities(psix, psiy, psiz):
     return (psix.flatten()*factor, psiy.flatten()*factor, psiz.flatten()*factor)
 
 
-def positions(phik, boxsize=options.boxsize, gridspacing=options.gridspacing):
+def positions(phik, boxsize, displacement_filename, gridspacing=1.0, redshift=0.0, fnl=0.0):
     """
     Function which takes potential field at a redshift
     and returns initial condition position and velocity
@@ -289,8 +254,9 @@ def positions(phik, boxsize=options.boxsize, gridspacing=options.gridspacing):
         (position, velocity) for the particles
     """
 
-    psix, psiy, psiz = displacement(phik)
-     
+    psix, psiy, psiz = displacement(phik, boxsize, displacement_filename, gridspacing, redshift, fnl)
+    
+
     space = numpy.arange(start=0, stop=boxsize, step=gridspacing)
     x, y, z = numpy.meshgrid(space, space, space)
 
@@ -303,7 +269,7 @@ def positions(phik, boxsize=options.boxsize, gridspacing=options.gridspacing):
 
     return position, velocity
 
-def write_ics():
+def write_ics(cosmo, options):
     """
     A function that writes out 
     initial condition file
@@ -311,7 +277,8 @@ def write_ics():
     shutil.copy2(options.ics_filename, options.zeldoics_filename)
     print("File copied ...")
     handle = h5py.File(options.zeldoics_filename, 'r+')
-    position, velocity = positions(deltak())
+    delta = deltak(options.boxsize, options.gridspacing, options.redshift, options.fnl)
+    position, velocity = positions(delta, options.boxsize, options.displacement_filename, options.gridspacing)
     position = position.astype(numpy.float32)
     velocity = velocity.astype(numpy.float32)
     handle['PartType1']['Coordinates'][:] = position[:]
@@ -338,6 +305,51 @@ def hermitianize(x):
 
 
 if __name__ == "__main__":
-    write_ics()
-    #matter_power(0, "pk")
+    
 
+    configfilename = './config1024.ini'
+    print 'Using %s'%configfilename
+    config = configargparse.ArgParser(default_config_files=[configfilename])
+
+    config.add('--boxsize', type=int, required=True, help='boxsize')
+    config.add('--redshift', type=float, required=True, help='redshift of calaculation')
+    config.add('--gridspacing', default=1.0, type=float, help='gridspacing in box')
+    config.add('--speed_of_light', type=float, default=3e5, help='gridspacing in box')
+    config.add('--fnl', type=float, default=0.0, help="fnl parameter")
+    config.add('--seed', type=int, default=42, help="fnl parameter")
+    config.add('--logfile', help='log file name')
+    config.add('--ics_filename', type=str)
+    config.add('--zeldoics_filename', type=str)
+    config.add('--displacement_filename', type=str)
+    config.add('--final_filename', type=str)
+    config.add('--final_condition_redshift', default=2, type=float)
+    
+    options = config.parse_args()
+
+    config = configargparse.ArgParser(default_config_files=['./class.ini'])
+    config.add_argument('--h', default=0.7, type=float)
+    config.add_argument('--z_pk', default=0.0, type=float)
+    config.add_argument('--output', default='mPk mTk', type=str)
+    config.add_argument('--omega_b', default=0.02, type=float)
+    config.add_argument('--omega_cdm', default=0.128, type=float)
+    config.add_argument('--n_s', default=1.0, type=float)
+    config.add_argument('--k_pivot', default=0.05, type=float)
+    config.add_argument('--P_k_max_1/Mpc', default=100, type=float)
+    config.add_argument('--A_s', default=2.15e-9, type=float)
+    config.add_argument('--k_min_tau0', default=4.0, type=float)
+    config.add_argument('--k_per_decade_for_pk', default=400, type=int)
+
+    classconfig = vars(config.parse_args())
+
+    numpy.random.seed(options.seed)
+    
+    cosmo = Class()
+    cosmo.set(classconfig)
+    cosmo.compute()
+
+    bg = cosmo.get_background()
+
+    volume = options.boxsize**3
+    gridsize = int(options.boxsize/options.gridspacing)
+    midpoint = gridsize/2
+    write_ics(cosmo, options)
