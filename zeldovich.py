@@ -140,7 +140,7 @@ def deltak(boxsize, gridspacing=1.0, redshift=0, fnl=0):
     gridsize = int(options.boxsize/options.gridspacing)
     midpoint = int(gridsize/2)
     #Setting up the k-space grid
-    kspace = 2 * numpy.pi * numpy.fft.fftfreq(n=gridsize, d=gridspacing).astype(numpy.float64)
+    kspace = 2 * numpy.pi * numpy.fft.fftfreq(n=gridsize, d=gridspacing)
     kx, ky, kz = numpy.meshgrid(kspace, kspace, kspace)
     kmodulus = numpy.sqrt(kx**2 + ky**2 + kz**2)[:,:,:midpoint + 1]
     
@@ -153,7 +153,7 @@ def deltak(boxsize, gridspacing=1.0, redshift=0, fnl=0):
      
     #simulating phik's  
     powerspectrum = primordial_power(kmodulus)
-    sdev = numpy.sqrt(powerspectrum*(volume)/2.0)
+    sdev = numpy.sqrt(powerspectrum*(volume)/(2.0))
     real = numpy.random.normal(loc=0, scale=sdev, size=sdev.shape)
     imag = numpy.random.normal(loc=0, scale=sdev, size=sdev.shape)
     phik = (real + 1j*imag).astype(numpy.complex64)
@@ -169,6 +169,7 @@ def deltak(boxsize, gridspacing=1.0, redshift=0, fnl=0):
     #Adding non-gaussianity
     if fnl >= 0 or fnl < 0:
         phi = numpy.fft.irfftn(phik)
+        print('Mean phi :', numpy.mean(numpy.abs(phi)))
         phi = phi + fnl*(phi**2 - numpy.mean(phi*phi.conjugate()))
         phik = numpy.fft.rfftn(phi)
         phik = hermitianize(phik)
@@ -255,6 +256,7 @@ def positions(phik, boxsize, displacement_filename, gridspacing=1.0, redshift=0.
     #gs = 2
     psix, psiy, psiz = displacement(phik, boxsize, displacement_filename, gridspacing, redshift, fnl)
     #psix, psiy, psiz = psix[::gs,::gs,::gs], psiy[::gs,::gs,::gs], psiz[::gs,::gs,::gs]
+    #psix, psiy, psiz = psix/gridspacing**3, psiy/gridspacing**3, psiz/gridspacing**3
     psix, psiy, psiz = psix/gridspacing**3, psiy/gridspacing**3, psiz/gridspacing**3
     
     space = numpy.arange(start=0.0+gridspacing/2, stop=(boxsize+gridspacing/2), step=gridspacing)
@@ -306,7 +308,7 @@ def hermitianize(x):
 if __name__ == "__main__":
     
 
-    configfilename = './config1024.ini'
+    configfilename = './config512.ini'
     logger.debug('Using %s'%configfilename)
     config = configargparse.ArgParser(default_config_files=[configfilename])
     config.add('--boxsize', type=int, required=True, help='boxsize')
