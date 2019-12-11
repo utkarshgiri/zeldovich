@@ -1,11 +1,16 @@
+import os
+import sys
 import h5py
 import numpy
 import shutil
 import configargparse
+from loguru import logger
 from classy import Class
 from scipy.interpolate import interp1d
 
+
 def primordial_potential_powerspectrum():
+    
     """
     Returns an interpolator object which 
     gives powerspectrum in the units of Mpc^3
@@ -19,6 +24,7 @@ def primordial_potential_powerspectrum():
 
 
 def transfer_primordial_potential_to_cdm(field='d_cdm', redshift=0):
+    
     """
     A function which returns an interpolator for 
     transfer function.
@@ -32,12 +38,14 @@ def transfer_primordial_potential_to_cdm(field='d_cdm', redshift=0):
         returns the corresponding transfer function
         interpolator for the given field.
     """
+    
     Tk = cosmo.get_transfer(z=redshift)
     Tk = interp1d(Tk['k (h/Mpc)']*cosmo.h(), Tk[field], fill_value='extrapolate')
     return Tk
 
 
 def matter_power(redshift=0, filename=None):
+    
     """
     Function which returns mattter powerspectrum using
     primordial powerspectrum interpolator and transfer
@@ -52,14 +60,13 @@ def matter_power(redshift=0, filename=None):
         A 2D array conttaining k, Pk values
     """
     
-    
     k = numpy.logspace(-2.5 ,1, 1000)
     primordial_power = primordial_potential_powerspectrum()
     Tk = transfer_primordial_potential_to_cdm(redshift=redshift) 
     power = numpy.zeros_like(k)
     
     for i, kval in enumerate(k):
-        power[i] = primordial_power(kval)*Tk(kval)**2#
+        power[i] = primordial_power(kval)*Tk(kval)**2
     
     if filename:
         numpy.save(filename, numpy.column_stack([k, power]))
@@ -68,6 +75,7 @@ def matter_power(redshift=0, filename=None):
 
 
 def matter_perturbation(phik, kmodulus, redshift=0):
+    
     """
     A function that applies CDM transfer function to 
     primordial potential modes generated on a grid
@@ -92,6 +100,7 @@ def matter_perturbation(phik, kmodulus, redshift=0):
 
 
 def class_powerspectrum(redshift=0):
+    
     """
     A helper function that returns the class powerspectrum
     at a given redshift 
@@ -129,36 +138,31 @@ def deltak(boxsize, gridspacing=1.0, redshift=0, fnl=0):
     """
     volume = boxsize**3
     gridsize = int(options.boxsize/options.gridspacing)
-    midpoint = gridsize/2
+    midpoint = int(gridsize/2)
     #Setting up the k-space grid
-    kspace = 2 * numpy.pi * numpy.fft.fftfreq(n=gridsize, d=gridspacing)
+    kspace = 2 * numpy.pi * numpy.fft.fftfreq(n=gridsize, d=gridspacing).astype(numpy.float64)
     kx, ky, kz = numpy.meshgrid(kspace, kspace, kspace)
     kmodulus = numpy.sqrt(kx**2 + ky**2 + kz**2)[:,:,:midpoint + 1]
     
-    phik = numpy.zeros_like(kmodulus, dtype=numpy.complex128)
-    delta0 = numpy.zeros_like(kmodulus, dtype=numpy.complex128)
-    delta = numpy.zeros_like(kmodulus, dtype=numpy.complex128)
+    phik = numpy.zeros_like(kmodulus, dtype=numpy.complex64)
+    #delta = numpy.zeros_like(kmodulus, dtype=numpy.complex64)
     
     #Interpolator object 
     primordial_power = primordial_potential_powerspectrum()
     T = transfer_primordial_potential_to_cdm(redshift=redshift) 
-    T0 = transfer_primordial_potential_to_cdm(redshift=0)
-    
- 
+     
     #simulating phik's  
     powerspectrum = primordial_power(kmodulus)
-    sdev = numpy.sqrt(powerspectrum*volume/2.0)
+    sdev = numpy.sqrt(powerspectrum*(volume)/2.0)
     real = numpy.random.normal(loc=0, scale=sdev, size=sdev.shape)
     imag = numpy.random.normal(loc=0, scale=sdev, size=sdev.shape)
-    phik = (real + 1j*imag)
+    phik = (real + 1j*imag).astype(numpy.complex64)
    
     #N-GenIC type cleaning
     phik[0,0,0] = 0
     phik[midpoint,:,:] = 0
     phik[:,midpoint,:] = 0
     phik[:,:,midpoint] = 0
-    phik[0,midpoint:,0] = 0
-    phik[midpoint:,:,0] = 0
 
     phik = hermitianize(phik)
 
@@ -169,19 +173,14 @@ def deltak(boxsize, gridspacing=1.0, redshift=0, fnl=0):
         phik = numpy.fft.rfftn(phi)
         phik = hermitianize(phik)
    
-    #T = T(kmodulus); T0=T0(kmodulus)
-    delta = phik*T(kmodulus)
-    delta0 = phik*T0(kmodulus)
-    
-    delta[0,0,0] = 0; delta0[0,0,0] = 0;
-    delta = hermitianize(delta)
-    delta0 = hermitianize(delta0)
-    #numpy.save(options.final_filename, delta0)
-    numpy.save(options.final_filename + 'vk', 1j*kz[:,:,:(midpoint+1)]*delta0/(kmodulus**2))
-    return delta
+    phik = phik*T(kmodulus)
+    phik[0,0,0] = 0
+    phik = hermitianize(phik)
+    return phik
 
 
 def displacement(deltak, boxsize, displacement_filename, gridspacing=1.0, redshift=0.0, fnl=0):
+    
     """
     Function to compute the displacement field from potential field
     Args:
@@ -194,15 +193,15 @@ def displacement(deltak, boxsize, displacement_filename, gridspacing=1.0, redshi
     """
 
     gridsize = int(boxsize/gridspacing)
-    midpoint = gridsize/2
-    kspace = 2 * numpy.pi * numpy.fft.fftfreq(n=gridsize, d=gridspacing)
+    midpoint = int(gridsize/2)
+    kspace = 2 * numpy.pi * numpy.fft.fftfreq(n=gridsize, d=gridspacing).astype(numpy.float64)
     kx, ky, kz = numpy.meshgrid(kspace, kspace, kspace[:midpoint+1])
     kmodulus = numpy.sqrt(kx**2 + ky**2 + kz**2)
   
-    eps = 1e-12
+    eps = 1e-32
     phik = (-deltak)/(kmodulus**2 + eps)
     phik[0,0,0] = 0
-    phik[phik > 1e10] = 0
+    phik[phik > 1e20] = 0
 
 
     phikx = -1j*kx*phik; phiky = -1j*ky*phik; phikz = -1j*kz*phik
@@ -214,7 +213,7 @@ def displacement(deltak, boxsize, displacement_filename, gridspacing=1.0, redshi
     phiky = hermitianize(phiky)
     phikz = hermitianize(phikz)
 
-    numpy.save(displacement_filename, phikz)
+    numpy.save(os.path.join(options.basedir, options.displacementfilename), phikz)
     
     psix = numpy.fft.irfftn(phikx)
     psiy = numpy.fft.irfftn(phiky)
@@ -253,20 +252,20 @@ def positions(phik, boxsize, displacement_filename, gridspacing=1.0, redshift=0.
     Returns:
         (position, velocity) for the particles
     """
-
+    #gs = 2
     psix, psiy, psiz = displacement(phik, boxsize, displacement_filename, gridspacing, redshift, fnl)
+    #psix, psiy, psiz = psix[::gs,::gs,::gs], psiy[::gs,::gs,::gs], psiz[::gs,::gs,::gs]
+    psix, psiy, psiz = psix/gridspacing**3, psiy/gridspacing**3, psiz/gridspacing**3
     
-
-    space = numpy.arange(start=0, stop=boxsize, step=gridspacing)
+    space = numpy.arange(start=0.0+gridspacing/2, stop=(boxsize+gridspacing/2), step=gridspacing)
     x, y, z = numpy.meshgrid(space, space, space)
-
     x += psix; y += psiy; z += psiz
 
     position = numpy.column_stack([x.flatten(), y.flatten(), z.flatten()])
     velocity = numpy.column_stack(velocities(psix, psiy, psiz))
     position[position<0] +=boxsize 
     position[position>boxsize] -=boxsize
-
+    
     return position, velocity
 
 def write_ics(cosmo, options):
@@ -274,11 +273,11 @@ def write_ics(cosmo, options):
     A function that writes out 
     initial condition file
     """
-    shutil.copy2(options.ics_filename, options.zeldoics_filename)
-    print("File copied ...")
-    handle = h5py.File(options.zeldoics_filename, 'r+')
+    icsfilename = os.path.join(options.basedir, options.icsfilename)
+    shutil.copy2(options.hdf5filename, icsfilename)
+    handle = h5py.File(icsfilename, 'r+')
     delta = deltak(options.boxsize, options.gridspacing, options.redshift, options.fnl)
-    position, velocity = positions(delta, options.boxsize, options.displacement_filename, options.gridspacing)
+    position, velocity = positions(delta, options.boxsize, options.displacementfilename, options.gridspacing)
     position = position.astype(numpy.float32)
     velocity = velocity.astype(numpy.float32)
     handle['PartType1']['Coordinates'][:] = position[:]
@@ -293,13 +292,13 @@ def hermitianize(x):
     `https://github.com/nualamccullagh/zeldovich-bao/`
     """
     gridsize = x.shape[0]
-    midpoint = gridsize/2
+    midpoint = int(gridsize/2)
 
-    for index in [0, gridsize/2]:
-        x[midpoint+1:,1:,index]= numpy.conj(numpy.fliplr(numpy.flipud(x[1:midpoint,1:,midpoint])))
+    for index in [0, midpoint]:
+        x[midpoint+1:,1:,index]= numpy.conj(numpy.fliplr(numpy.flipud(x[1:midpoint,1:,index])))
         x[midpoint+1:,0,index] = numpy.conj(x[midpoint-1:0:-1,0,index])
         x[0,midpoint+1:,index] = numpy.conj(x[0,midpoint-1:0:-1,index])
-        x[midpoint,midpoint+1:,index] = numpy.conj(x[midpoint,midpoint-1:0:-1,midpoint])
+        x[midpoint,midpoint+1:,index] = numpy.conj(x[midpoint,midpoint-1:0:-1,index])
     
     return x
 
@@ -308,9 +307,8 @@ if __name__ == "__main__":
     
 
     configfilename = './config1024.ini'
-    print 'Using %s'%configfilename
+    logger.debug('Using %s'%configfilename)
     config = configargparse.ArgParser(default_config_files=[configfilename])
-
     config.add('--boxsize', type=int, required=True, help='boxsize')
     config.add('--redshift', type=float, required=True, help='redshift of calaculation')
     config.add('--gridspacing', default=1.0, type=float, help='gridspacing in box')
@@ -318,18 +316,23 @@ if __name__ == "__main__":
     config.add('--fnl', type=float, default=0.0, help="fnl parameter")
     config.add('--seed', type=int, default=42, help="fnl parameter")
     config.add('--logfile', help='log file name')
-    config.add('--ics_filename', type=str)
-    config.add('--zeldoics_filename', type=str)
-    config.add('--displacement_filename', type=str)
-    config.add('--final_filename', type=str)
+    config.add('--basedir', type=str, help='base directory of snapshots')
+    config.add('--hdf5filename', type=str)
+    config.add('--icsfilename', type=str)
+    config.add('--displacementfilename', type=str)
+    config.add('--linearvkfilename', type=str)
     config.add('--final_condition_redshift', default=2, type=float)
     
     options = config.parse_args()
+    
+
+    shutil.copy2(configfilename, os.path.join(options.basedir, os.path.basename(configfilename)))
+
 
     config = configargparse.ArgParser(default_config_files=['./class.ini'])
     config.add_argument('--h', default=0.7, type=float)
     config.add_argument('--z_pk', default=0.0, type=float)
-    config.add_argument('--output', default='mPk mTk', type=str)
+    config.add_argument('--output', default='mTk', type=str)
     config.add_argument('--omega_b', default=0.02, type=float)
     config.add_argument('--omega_cdm', default=0.128, type=float)
     config.add_argument('--n_s', default=1.0, type=float)
@@ -347,9 +350,9 @@ if __name__ == "__main__":
     cosmo.set(classconfig)
     cosmo.compute()
 
-    bg = cosmo.get_background()
+    #bg = cosmo.get_background()
 
-    volume = options.boxsize**3
-    gridsize = int(options.boxsize/options.gridspacing)
-    midpoint = gridsize/2
+    #volume = options.boxsize**3
+    #gridsize = int(options.boxsize/options.gridspacing)
+    #midpoint = gridsize/2
     write_ics(cosmo, options)
